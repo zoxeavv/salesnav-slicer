@@ -1,0 +1,4 @@
+title = "cargo-salesnav-slicer"
+
+[extend]
+useDefault = true

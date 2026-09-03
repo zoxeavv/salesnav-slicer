@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cargo Sales Nav Slicer"
+  short_description: "Split oversized Sales Navigator company searches"
+  default_prompt: "Use $cargo-salesnav-slicer to validate and safely split this Sales Navigator company search into a reviewed under-cap manifest."

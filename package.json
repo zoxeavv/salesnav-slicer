@@ -1,0 +1,14 @@
+{
+  "name": "cargo-salesnav-slicer-skill",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "validate": "node scripts/slice-salesnav.mjs examples/plan.example.json",
+    "dogfood": "node scripts/slice-salesnav.mjs examples/plan.example.json --fixture examples/dogfood-counts.json --output dogfood-manifest.json && node scripts/verify-manifest.mjs dogfood-manifest.json"
+  }
+}

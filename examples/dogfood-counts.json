@@ -1,0 +1,7 @@
+{
+  "root": 1700,
+  "geography:market-a": 1300,
+  "geography:market-a/headcount:small": 700,
+  "geography:market-a/headcount:large": 600,
+  "geography:market-b": 400
+}

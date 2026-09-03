@@ -1,0 +1,42 @@
+{
+  "marketSearchUrl": "https://www.linkedin.com/sales/search/company?query=(filters:List((type:REGION,values:List((id:105015875,selectionType:INCLUDED),(id:100565514,selectionType:INCLUDED))),(type:ANNUAL_REVENUE,rangeValue:(min:10,max:200),selectedSubFilter:EUR)))&viewAllFilters=true",
+  "extractionCap": 1000,
+  "maxSearches": 10,
+  "reconciliationTolerance": 0.05,
+  "dimensions": [
+    {
+      "id": "geography",
+      "filterType": "REGION",
+      "exhaustive": true,
+      "buckets": [
+        {
+          "id": "market-a",
+          "label": "Market A",
+          "values": [{ "id": "105015875" }]
+        },
+        {
+          "id": "market-b",
+          "label": "Market B",
+          "values": [{ "id": "100565514" }]
+        }
+      ]
+    },
+    {
+      "id": "headcount",
+      "filterType": "COMPANY_HEADCOUNT",
+      "exhaustive": true,
+      "buckets": [
+        {
+          "id": "small",
+          "label": "Small",
+          "values": [{ "id": "B" }, { "id": "C" }]
+        },
+        {
+          "id": "large",
+          "label": "Large",
+          "values": [{ "id": "D" }, { "id": "E" }]
+        }
+      ]
+    }
+  ]
+}
