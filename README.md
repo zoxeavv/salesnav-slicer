@@ -15,6 +15,9 @@ sends outreach.
 Keep one clone and expose it to both agents. No package installation is
 required.
 
+For an agent-led installation, copy and send the prompt in
+[INSTALL_WITH_AI.md](INSTALL_WITH_AI.md).
+
 ```bash
 git clone https://github.com/zoxeavv/salesnav-slicer.git \
   ~/.agents/skills/salesnav-slicer
