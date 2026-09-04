@@ -1,61 +1,81 @@
 ---
-name: cargo-salesnav-slicer
-description: Count and recursively split an oversized LinkedIn Sales Navigator company search into a reviewed under-cap URL manifest using Cargo searchCompanyMetrics. Use when a Cargo TAM search may exceed the 1,000-company extraction cap. Do not use for people searches, extraction, enrichment, CRM writes, or outreach.
+name: salesnav-slicer
+description: Open supplied LinkedIn Sales Navigator company-search URLs in Chrome, verify the active LinkedIn account, read result counts, recursively split oversized searches, and reconcile leaf counts with the parent. Use for browser-based Sales Navigator TAM slicing without Cargo, scraping APIs, extensions, extraction, enrichment, CRM writes, or outreach.
 ---
 
-# Cargo Sales Navigator slicer
+# Sales Navigator slicer
 
-Produce a design-time manifest for Cargo:
+Turn one or more reviewed company-search URLs into a verified manifest:
 
 ```text
-reviewed company-search URL -> count -> split -> recount -> under-cap URLs
+Chrome session -> parent count -> mutually exclusive slices -> leaf counts
+  -> numerical reconciliation -> return to parent and account readback
 ```
 
-The script never extracts companies or writes to Cargo models. Only `--execute`
-invokes Cargo, and it invokes `salesNavigator.searchCompanyMetrics` for bounded
-counts.
+This skill has no Cargo dependency and makes no provider API call. It uses the
+user's existing Chrome and Sales Navigator session. The bundled scripts use
+only Node.js built-ins; do not run `npm install`.
 
-## Workflow
+## Required inputs
 
-1. Obtain the exact reviewed `https://*.linkedin.com/sales/search/company` URL.
-   Do not convert a people search and do not invent LinkedIn facet IDs.
-2. Copy `examples/plan.example.json` and replace the parent URL and buckets with
-   reviewed, mutually exclusive facets. Prefer industry, then geography, then
-   headcount when the available taxonomy supports that order.
-3. Validate without spending credits:
+- one or more exact `https://*.linkedin.com/sales/search/company` URLs;
+- extraction cap, default `1000` and always interpreted strictly (`999` is
+  acceptable, `1000` is not);
+- optional expected LinkedIn display name or profile URL;
+- optional pre-reviewed child URLs or partition dimensions.
 
-   ```bash
-   node scripts/slice-salesnav.mjs plan.json
-   ```
+## Browser workflow
 
-4. Before a live count, show `maxSearches` and `maxEstimatedCountCredits`. Run
-   only after the user explicitly authorizes the bounded Cargo count:
+1. Load the available computer-use guide, then open one new tab in **Chrome**.
+   Reuse that tab for the complete run.
+2. Navigate to the first parent URL. If LinkedIn requests login, seat selection,
+   MFA or a challenge, pause for the user. Never request, store or type their
+   password and never bypass a challenge.
+3. Read the visible LinkedIn identity from the account/profile menu. Record the
+   display name and profile URL when available. Stop on a mismatch with the
+   expected identity.
+4. Read the result-count text from the Sales Navigator UI and preserve both the
+   visible text and parsed integer. Mark abbreviated values such as `52K+` as
+   `exact: false`; do not present them as exact.
+5. For every count at or above the cap, create mutually exclusive child
+   searches with Sales Navigator's own filter UI, then capture each resulting
+   address-bar URL. Never invent facet IDs or handcraft a filter from a label.
+   Prefer a complete partition of already-selected geography, industry or
+   company-headcount values. Recurse only on oversized children.
+6. Return to the exact parent search. Reopen the account menu and verify that
+   the LinkedIn identity did not change. Re-read the parent count if the run was
+   long enough for results to drift.
+7. Accept only a manifest whose leaves are all strictly below the cap and whose
+   sum reconciles with an exact parent count. An abbreviated count, incomplete
+   partition, changed identity, changed parent count or numerical delta is
+   `review_required`, never silently `ready`.
 
-   ```bash
-   node scripts/slice-salesnav.mjs plan.json --execute \
-     --checkpoint counted.json --output manifest.json
-   ```
+If the user supplies several independent parent URLs, run this contract once
+per URL and keep separate manifests. Do not sum overlapping parent searches.
+Create the plan and browser-observation JSON as internal run artifacts; never
+ask the user to write them.
 
-   Add `--connector-uuid <uuid>` when the Cargo workspace has multiple Sales
-   Navigator connections. Resume an interrupted run with
-   `--resume counted.json`.
-5. Accept the manifest only when `status` is `ready`, `blocked` is empty, every
-   leaf count is strictly below `extractionCap`, and the reconciliation ratio is
-   within the plan tolerance. `review_required` and `blocked` are stop states.
+## Deterministic helper
 
-## Dogfood without Cargo spend
-
-Run the same recursive engine with deterministic counts:
+Use the helper to validate URL rewriting and drive the next browser count:
 
 ```bash
-npm run dogfood
+node scripts/slice-salesnav.mjs plan.json
+node scripts/slice-salesnav.mjs plan.json --counts browser-counts.json \
+  --output manifest.json
+node scripts/verify-manifest.mjs manifest.json
 ```
 
-This must return `status: ready`, three leaves below `1000`, and a zero
-reconciliation delta. It proves URL rewriting, recursion, limits, and manifest
-verification; it does not prove live Cargo access or current provider pricing.
+When the helper returns `needs_browser_count`, open exactly the returned URL in
+the same Chrome tab, record that observation under the returned key, and rerun.
+Read [references/plan-schema.md](references/plan-schema.md) for the plan,
+browser-observation and manifest contracts.
 
-Read [references/plan-schema.md](references/plan-schema.md) when creating or
-reviewing a plan. A generated manifest is not authorization to run
-`fetchAccountSearch`, enrich accounts, promote rows, mutate a CRM, or contact
-anyone.
+## Hard boundaries
+
+- company searches only; reject `/sales/search/people`;
+- no Cargo account, CLI, token, connector or credit;
+- no scraping API, browser extension or LinkedIn cookie export;
+- no company/contact extraction, enrichment, CRM mutation or outreach;
+- no claim of exact reconciliation when Sales Navigator only exposes an
+  abbreviated or changing count.

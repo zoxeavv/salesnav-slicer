@@ -2,7 +2,7 @@
   "marketSearchUrl": "https://www.linkedin.com/sales/search/company?query=(filters:List((type:REGION,values:List((id:105015875,selectionType:INCLUDED),(id:100565514,selectionType:INCLUDED))),(type:ANNUAL_REVENUE,rangeValue:(min:10,max:200),selectedSubFilter:EUR)))&viewAllFilters=true",
   "extractionCap": 1000,
   "maxSearches": 10,
-  "reconciliationTolerance": 0.05,
+  "reconciliationTolerance": 0,
   "dimensions": [
     {
       "id": "geography",

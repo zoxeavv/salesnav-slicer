@@ -33,6 +33,15 @@ async function main() {
 	) {
 		failures.push("reconciliation ratio exceeds tolerance");
 	}
+	if (manifest.countSource === "sales-navigator-ui") {
+		if (manifest.countsExact !== true) failures.push("browser counts are not all exact");
+		if (manifest.browser?.name !== "Chrome") failures.push("browser readback is not Chrome");
+		const initialAccount = accountKey(manifest.browser?.initialAccount);
+		const finalAccount = accountKey(manifest.browser?.finalAccount);
+		if (!initialAccount || initialAccount !== finalAccount) {
+			failures.push("LinkedIn account identity is missing or changed");
+		}
+	}
 
 	if (failures.length > 0) throw new Error(failures.join("; "));
 	process.stdout.write(
@@ -44,6 +53,11 @@ async function main() {
 			reconciliationDelta: manifest.reconciliationDelta,
 		})}\n`,
 	);
+}
+
+function accountKey(account) {
+	if (!account?.displayName?.trim()) return null;
+	return account.profileUrl ?? account.displayName.trim().toLocaleLowerCase();
 }
 
 main().catch((error) => {

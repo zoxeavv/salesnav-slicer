@@ -1,8 +1,6 @@
 const DEFAULT_EXTRACTION_CAP = 1_000;
 const DEFAULT_MAX_SEARCHES = 25;
-const DEFAULT_RECONCILIATION_TOLERANCE = 0.05;
-
-export const CARGO_SEARCH_COMPANY_METRICS_CREDIT_ESTIMATE = 0.25;
+const DEFAULT_RECONCILIATION_TOLERANCE = 0;
 
 export function validateSalesNavigatorCompanySearchUrl(input) {
 	let url;
@@ -104,12 +102,20 @@ export function validateSalesNavigatorSliceRequest(request) {
 				throw new Error(`duplicate bucket id in ${dimension.id}: ${bucket.id}`);
 			}
 			bucketIds.add(bucket.id);
-			assertFacetValues(bucket.values);
+			const hasCapturedUrl = typeof bucket.url === "string" && bucket.url.trim().length > 0;
+			const hasFacetValues = bucket.values !== undefined;
+			if (hasCapturedUrl === hasFacetValues) {
+				throw new Error(
+					`bucket ${dimension.id}:${bucket.id} must contain exactly one of url or values`,
+				);
+			}
+			if (hasCapturedUrl) validateSalesNavigatorCompanySearchUrl(bucket.url);
+			else assertFacetValues(bucket.values);
 			if (bucket.whenPathIncludes !== undefined && !bucket.whenPathIncludes.trim()) {
 				throw new Error(`dimension ${dimension.id} has an empty path condition`);
 			}
 
-			if (dimension.exhaustive) {
+			if (dimension.exhaustive && hasFacetValues) {
 				for (const value of bucket.values) {
 					if (partitionValues.has(value.id)) {
 						throw new Error(
@@ -192,7 +198,9 @@ export async function buildSalesNavigatorSliceManifest(request, countSearch, opt
 
 		usedDimensionIds.add(dimension.id);
 		for (const bucket of applicableBuckets) {
-			const childUrl = setSalesNavigatorCompanyFilter(url, dimension.filterType, bucket.values);
+			const childUrl = bucket.url
+				? validateSalesNavigatorCompanySearchUrl(bucket.url).toString()
+				: setSalesNavigatorCompanyFilter(url, dimension.filterType, bucket.values);
 			await visit(childUrl, [...path, `${dimension.id}:${bucket.id}`], dimensionIndex + 1);
 		}
 	};
@@ -229,10 +237,6 @@ export async function buildSalesNavigatorSliceManifest(request, countSearch, opt
 		countCalls: countedSearches.length,
 		reusedCountCalls,
 		executedCountCalls,
-		estimatedCountCredits: countedSearches.length * CARGO_SEARCH_COMPANY_METRICS_CREDIT_ESTIMATE,
-		estimatedIncrementalCountCredits:
-			executedCountCalls * CARGO_SEARCH_COMPANY_METRICS_CREDIT_ESTIMATE,
-		maxEstimatedCountCredits: maxSearches * CARGO_SEARCH_COMPANY_METRICS_CREDIT_ESTIMATE,
 		leavesCount: leaves.length,
 		leavesTotalResults,
 		reconciliationDelta,

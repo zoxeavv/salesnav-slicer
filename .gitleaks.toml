@@ -1,4 +1,4 @@
-title = "cargo-salesnav-slicer"
+title = "salesnav-slicer"
 
 [extend]
 useDefault = true

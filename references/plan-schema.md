@@ -1,13 +1,13 @@
-# Plan schema
+# Plan and browser observation schema
 
-## Input
+## Plan
 
 ```json
 {
   "marketSearchUrl": "https://www.linkedin.com/sales/search/company?query=(filters:List(...))",
   "extractionCap": 1000,
-  "maxSearches": 10,
-  "reconciliationTolerance": 0.05,
+  "maxSearches": 25,
+  "reconciliationTolerance": 0,
   "dimensions": [
     {
       "id": "geography",
@@ -17,7 +17,7 @@
         {
           "id": "market-a",
           "label": "Market A",
-          "values": [{ "id": "reviewed-linkedin-facet-id" }]
+          "url": "https://www.linkedin.com/sales/search/company?query=(filters:List(...))"
         }
       ]
     }
@@ -25,30 +25,63 @@
 }
 ```
 
-## Fields
+- `marketSearchUrl` is the exact reviewed company-search URL.
+- `extractionCap` defaults to `1000`; a count equal to the cap must be split.
+- `maxSearches` bounds browser navigations for one parent.
+- `reconciliationTolerance` defaults to `0`. Raise it only when the user
+  explicitly accepts a non-zero numerical tolerance.
+- `dimensions` are ordered partitions. Prefer a bucket `url` captured after
+  applying that slice in the Sales Navigator UI. A bucket may instead contain
+  `values` for deterministic URL rewriting, but those facet IDs must come from
+  reviewed Sales Navigator URLs and never from guessed labels. Use exactly one
+  of `url` or `values` per bucket.
+- `exhaustive: true` asserts that the buckets cover the parent without overlap
+  or gaps. If that cannot be proven, use `false` and expect `review_required`.
 
-- `marketSearchUrl`: exact reviewed Sales Navigator company-search URL.
-- `extractionCap`: integer from 1 to 1000. A result equal to the cap remains
-  truncated and must be split.
-- `maxSearches`: hard ceiling on total count calls, including resumed counts.
-- `reconciliationTolerance`: accepted absolute difference between the parent
-  count and the sum of leaves, expressed as a ratio.
-- `dimensions`: ordered partition strategies. Each dimension replaces one Sales
-  Navigator filter in the parent query.
-- `exhaustive`: assert `true` only when the buckets cover the parent dimension
-  without gaps. Duplicate facet values are rejected.
-- `whenPathIncludes`: optionally apply a bucket only below one prior path, such
-  as `industry:manufacturing`.
-- `values[].text`: retain a provider-required facet label when Sales Navigator
-  includes it, for example a headcount band.
+## Browser counts
+
+The user never needs to author this JSON: the skill creates it as a run artifact
+from the supplied parent URL and the child URLs captured in Chrome. The helper
+returns the next required `{ key, path, url }`. Record the visible
+observation under that key:
+
+```json
+{
+  "browser": {
+    "name": "Chrome",
+    "initialAccount": {
+      "displayName": "Visible LinkedIn name",
+      "profileUrl": "https://www.linkedin.com/in/example/"
+    },
+    "finalAccount": {
+      "displayName": "Visible LinkedIn name",
+      "profileUrl": "https://www.linkedin.com/in/example/"
+    },
+    "finalUrl": "https://www.linkedin.com/sales/search/company?query=(filters:List(...))",
+    "observedAt": "2026-09-04T13:00:00.000Z"
+  },
+  "counts": {
+    "root": {
+      "url": "https://www.linkedin.com/sales/search/company?query=(filters:List(...))",
+      "display": "1,700 results",
+      "count": 1700,
+      "exact": true
+    }
+  }
+}
+```
+
+For `52K+ results`, preserve that text, use the integer lower bound `52000` and
+set `exact: false`. The final manifest must then remain `review_required`.
 
 ## Output states
 
-- `ready`: no oversized branch remains and no review warning exists.
-- `review_required`: the engine completed but a partition or reconciliation
-  warning requires human review.
-- `blocked`: a branch exhausted its dimensions or the count-call ceiling.
-
-The credit estimate defaults to `0.25` per Cargo count call. It is a planning
-estimate, not a live billing quote; verify current Cargo billing before running
-`--execute`.
+- `needs_browser_count`: open the returned URL in the same Chrome tab and add
+  the observation under the returned key.
+- `ready`: all leaves are below the cap, every count is exact, the partition is
+  exhaustive, the sum reconciles and the same LinkedIn account is visible after
+  returning to the parent.
+- `review_required`: slicing completed but a count, partition, identity or
+  reconciliation condition is not proven.
+- `blocked`: dimensions or the navigation ceiling were exhausted while an
+  oversized branch remained.

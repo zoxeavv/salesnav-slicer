@@ -2,10 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-	buildCargoSearchCompanyMetricsArgs,
-	extractCargoTotalResults,
-} from "../scripts/cargo-counter.mjs";
-import {
 	buildSalesNavigatorSliceManifest,
 	setSalesNavigatorCompanyFilter,
 	validateSalesNavigatorCompanySearchUrl,
@@ -66,6 +62,32 @@ test("replaces one facet and preserves the remaining ICP filters", () => {
 	assert.equal(parsed.searchParams.get("viewAllFilters"), "true");
 });
 
+test("uses a child URL captured directly from the Sales Navigator UI", async () => {
+	const capturedChildUrl = setSalesNavigatorCompanyFilter(MARKET_URL, "REGION", [
+		{ id: "105015875" },
+	]);
+	const request = {
+		marketSearchUrl: MARKET_URL,
+		extractionCap: 1_000,
+		dimensions: [
+			{
+				id: "captured",
+				filterType: "REGION",
+				exhaustive: true,
+				buckets: [{ id: "market-a", label: "Market A", url: capturedChildUrl }],
+			},
+		],
+	};
+	const visited = [];
+	const manifest = await buildSalesNavigatorSliceManifest(request, async (url) => {
+		visited.push(url);
+		return url === MARKET_URL ? 1_100 : 900;
+	});
+
+	assert.deepEqual(visited, [MARKET_URL, capturedChildUrl]);
+	assert.equal(manifest.leaves[0].url, capturedChildUrl);
+});
+
 test("recurses to a ready manifest whose leaves are strictly below the cap", async () => {
 	const counts = new Map([
 		["root", 1_700],
@@ -87,7 +109,6 @@ test("recurses to a ready manifest whose leaves are strictly below the cap", asy
 	);
 	assert.ok(manifest.leaves.every((leaf) => leaf.count < 1_000));
 	assert.equal(manifest.countCalls, 5);
-	assert.equal(manifest.estimatedCountCredits, 1.25);
 	assert.equal(manifest.reconciliationDelta, 0);
 });
 
@@ -131,20 +152,4 @@ test("checkpointed counts are reused without recounting", async () => {
 	assert.equal(newlyCounted.length, 2);
 	assert.equal(manifest.reusedCountCalls, 3);
 	assert.equal(manifest.executedCountCalls, 2);
-	assert.equal(manifest.estimatedIncrementalCountCredits, 0.5);
-});
-
-test("builds the Cargo count action and reads nested totals", () => {
-	const args = buildCargoSearchCompanyMetricsArgs(MARKET_URL, "connector-uuid");
-	const action = JSON.parse(args[args.indexOf("--action") + 1]);
-	const data = JSON.parse(args[args.indexOf("--data") + 1]);
-	assert.deepEqual(action, {
-		kind: "connector",
-		integrationSlug: "salesNavigator",
-		actionSlug: "searchCompanyMetrics",
-		connectorUuid: "connector-uuid",
-	});
-	assert.deepEqual(data, { url: MARKET_URL });
-	assert.ok(args.includes("--wait-until-finished"));
-	assert.equal(extractCargoTotalResults({ runContext: { metrics: { total_results: 4_321 } } }), 4_321);
 });

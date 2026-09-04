@@ -2,99 +2,192 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import { createCargoSearchCompanyMetricsCounter } from "./cargo-counter.mjs";
 import {
 	buildSalesNavigatorSliceManifest,
-	CARGO_SEARCH_COMPANY_METRICS_CREDIT_ESTIMATE,
+	validateSalesNavigatorCompanySearchUrl,
 	validateSalesNavigatorSliceRequest,
 } from "./slicer-core.mjs";
+
+class NeedsBrowserCountError extends Error {
+	constructor(url, path) {
+		super(`Sales Navigator count required for ${pathKey(path)}`);
+		this.name = "NeedsBrowserCountError";
+		this.nextSearch = { key: pathKey(path), path, url };
+	}
+}
 
 async function main() {
 	const args = process.argv.slice(2);
 	const invocationDirectory = process.env.INIT_CWD ?? process.cwd();
 	const inputPath = positionalArgument(args);
 	const outputPath = flagValue(args, "--output");
-	const connectorUuid = flagValue(args, "--connector-uuid");
-	const resumePath = flagValue(args, "--resume");
-	const checkpointPath = flagValue(args, "--checkpoint");
+	const countsPath = flagValue(args, "--counts");
 	const fixturePath = flagValue(args, "--fixture");
-	const execute = args.includes("--execute");
 
 	if (!inputPath) {
 		throw new Error(
-			"Usage: node scripts/slice-salesnav.mjs <plan.json> [--execute | --fixture counts.json] [--connector-uuid uuid] [--resume counted.json] [--checkpoint counted.json] [--output manifest.json]",
+			"Usage: node scripts/slice-salesnav.mjs <plan.json> [--counts browser-counts.json | --fixture counts.json] [--output manifest.json]",
 		);
 	}
-	for (const flag of ["--output", "--connector-uuid", "--resume", "--checkpoint", "--fixture"]) {
+	for (const flag of ["--output", "--counts", "--fixture"]) {
 		if (args.includes(flag) && !flagValue(args, flag)) throw new Error(`${flag} requires a value`);
 	}
-	if (execute && fixturePath) throw new Error("--execute and --fixture are mutually exclusive");
+	if (countsPath && fixturePath) throw new Error("--counts and --fixture are mutually exclusive");
 
 	const request = JSON.parse(await readFile(resolve(invocationDirectory, inputPath), "utf8"));
 	validateSalesNavigatorSliceRequest(request);
 
-	if (!execute && !fixturePath) {
+	if (!countsPath && !fixturePath) {
 		writeJson({
-			status: "validated_not_executed",
-			message: "Pass --execute for bounded Cargo counts or --fixture for deterministic dogfood.",
+			status: "validated_not_counted",
+			message:
+				"Open the parent URL in Chrome, record Sales Navigator UI counts, then pass --counts.",
 			marketSearchUrl: request.marketSearchUrl,
 			dimensions: request.dimensions.map((dimension) => dimension.id),
 			maxSearches: request.maxSearches ?? 25,
-			maxEstimatedCountCredits:
-				(request.maxSearches ?? 25) * CARGO_SEARCH_COMPANY_METRICS_CREDIT_ESTIMATE,
-			creditEstimateBasis:
-				"0.25 credit per searchCompanyMetrics call; verify live Cargo billing before execution",
 		});
 		return;
 	}
 
-	const seedCountedSearches = resumePath
-		? readCountedSearches(
-				JSON.parse(await readFile(resolve(invocationDirectory, resumePath), "utf8")),
-			)
-		: [];
-	const checkpointedSearches = [...seedCountedSearches];
-	let countSearch;
-	if (fixturePath) {
-		const fixture = JSON.parse(
-			await readFile(resolve(invocationDirectory, fixturePath), "utf8"),
-		);
-		countSearch = async (_url, path) => {
-			const key = path.length === 0 ? "root" : path.join("/");
-			const count = fixture[key];
-			if (!Number.isInteger(count) || count < 0) {
-				throw new Error(`fixture is missing a non-negative integer count for ${key}`);
-			}
-			return count;
-		};
-	} else {
-		countSearch = createCargoSearchCompanyMetricsCounter({ connectorUuid });
+	const isFixture = Boolean(fixturePath);
+	const sourcePath = fixturePath ?? countsPath;
+	const source = JSON.parse(await readFile(resolve(invocationDirectory, sourcePath), "utf8"));
+	const counts = isFixture ? source : source.counts;
+	if (!counts || typeof counts !== "object" || Array.isArray(counts)) {
+		throw new Error(`${isFixture ? "fixture" : "browser counts"} must contain a count map`);
 	}
 
-	const manifest = await buildSalesNavigatorSliceManifest(request, countSearch, {
-		seedCountedSearches,
-		onCounted: checkpointPath
-			? async (search) => {
-					checkpointedSearches.push(search);
-					await writeFile(
-						resolve(invocationDirectory, checkpointPath),
-						`${JSON.stringify({ countedSearches: checkpointedSearches }, null, 2)}\n`,
-						"utf8",
-					);
-				}
-			: undefined,
-	});
-	const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+	const observationsByKey = new Map();
+	const countSearch = async (url, path) => {
+		const key = pathKey(path);
+		const raw = counts[key];
+		if (raw === undefined) throw new NeedsBrowserCountError(url, path);
+		const observation = normalizeCountObservation(raw, key, url, isFixture);
+		observationsByKey.set(key, observation);
+		return observation.count;
+	};
+
+	let manifest;
+	try {
+		manifest = await buildSalesNavigatorSliceManifest(request, countSearch);
+	} catch (error) {
+		if (error instanceof NeedsBrowserCountError) {
+			writeJson({
+				status: "needs_browser_count",
+				countSource: "sales-navigator-ui",
+				nextSearch: error.nextSearch,
+				recordedCountKeys: [...observationsByKey.keys()],
+			});
+			return;
+		}
+		throw error;
+	}
+
+	const approximateKeys = [...observationsByKey.entries()]
+		.filter(([, observation]) => !observation.exact)
+		.map(([key]) => key);
+	const warnings = [...manifest.warnings];
+	if (approximateKeys.length > 0) {
+		warnings.push(`abbreviated Sales Navigator counts: ${approximateKeys.join(", ")}`);
+	}
+
+	const browser = isFixture ? undefined : validateBrowserReadback(source.browser, request.marketSearchUrl);
+	const result = {
+		...manifest,
+		status: manifest.blocked.length > 0 ? "blocked" : warnings.length > 0 ? "review_required" : "ready",
+		countSource: isFixture ? "fixture" : "sales-navigator-ui",
+		countsExact: approximateKeys.length === 0,
+		warnings,
+		...(browser ? { browser } : {}),
+	};
+	const serialized = `${JSON.stringify(result, null, 2)}\n`;
 	if (outputPath) {
 		await writeFile(resolve(invocationDirectory, outputPath), serialized, "utf8");
 	}
 	process.stdout.write(serialized);
 }
 
+function normalizeCountObservation(raw, key, expectedUrl, isFixture) {
+	if (Number.isInteger(raw) && raw >= 0) {
+		if (!isFixture) {
+			throw new Error(`browser count ${key} must include count, display, exact and url`);
+		}
+		return { count: raw, display: String(raw), exact: true, url: expectedUrl };
+	}
+	if (!raw || typeof raw !== "object") {
+		throw new Error(`count ${key} must be a non-negative integer or observation object`);
+	}
+	if (!Number.isInteger(raw.count) || raw.count < 0) {
+		throw new Error(`count ${key} must contain a non-negative integer`);
+	}
+	if (!sameSalesNavigatorSearch(raw.url, expectedUrl)) {
+		throw new Error(`count ${key} was observed on a different Sales Navigator URL`);
+	}
+	if (typeof raw.display !== "string" || !raw.display.trim()) {
+		throw new Error(`count ${key} must preserve the visible Sales Navigator count text`);
+	}
+	if (typeof raw.exact !== "boolean") {
+		throw new Error(`count ${key} must declare whether the visible count is exact`);
+	}
+	return { count: raw.count, display: raw.display, exact: raw.exact, url: raw.url };
+}
+
+function validateBrowserReadback(browser, parentUrl) {
+	if (!browser || typeof browser !== "object") {
+		throw new Error("browser counts must include final Chrome and LinkedIn account readback");
+	}
+	if (browser.name !== "Chrome") throw new Error("browser readback must come from Chrome");
+	const initialAccount = validateAccount(browser.initialAccount, "initialAccount");
+	const finalAccount = validateAccount(browser.finalAccount, "finalAccount");
+	if (accountKey(initialAccount) !== accountKey(finalAccount)) {
+		throw new Error("LinkedIn account changed during the slicing run");
+	}
+	if (!sameSalesNavigatorSearch(browser.finalUrl, parentUrl)) {
+		throw new Error("Chrome did not return to the parent Sales Navigator search");
+	}
+	if (typeof browser.observedAt !== "string" || Number.isNaN(Date.parse(browser.observedAt))) {
+		throw new Error("browser readback must include an ISO observedAt timestamp");
+	}
+	return { ...browser, initialAccount, finalAccount };
+}
+
+function validateAccount(value, field) {
+	if (!value || typeof value !== "object" || !value.displayName?.trim()) {
+		throw new Error(`${field} must include the visible LinkedIn display name`);
+	}
+	if (value.profileUrl !== undefined) {
+		const profile = new URL(value.profileUrl);
+		if (!profile.hostname.endsWith("linkedin.com")) {
+			throw new Error(`${field}.profileUrl must use linkedin.com`);
+		}
+	}
+	return value;
+}
+
+function accountKey(account) {
+	return account.profileUrl ?? account.displayName.trim().toLocaleLowerCase();
+}
+
+function sameSalesNavigatorSearch(candidate, parent) {
+	const candidateUrl = validateSalesNavigatorCompanySearchUrl(candidate);
+	const parentUrl = validateSalesNavigatorCompanySearchUrl(parent);
+	return queryValue(candidateUrl) === queryValue(parentUrl);
+}
+
+function queryValue(url) {
+	if (url.searchParams.has("query")) return url.searchParams.get("query");
+	const params = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+	return params.get("query");
+}
+
+function pathKey(path) {
+	return path.length === 0 ? "root" : path.join("/");
+}
+
 function positionalArgument(args) {
 	for (let index = 0; index < args.length; index += 1) {
 		if (args[index].startsWith("--")) {
-			if (args[index] !== "--execute") index += 1;
+			index += 1;
 			continue;
 		}
 		return args[index];
@@ -105,13 +198,6 @@ function positionalArgument(args) {
 function flagValue(args, flag) {
 	const index = args.indexOf(flag);
 	return index === -1 ? undefined : args[index + 1];
-}
-
-function readCountedSearches(value) {
-	if (!value || typeof value !== "object" || !Array.isArray(value.countedSearches)) {
-		throw new Error("resume file must contain countedSearches");
-	}
-	return value.countedSearches;
 }
 
 function writeJson(value) {
