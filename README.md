@@ -1,23 +1,37 @@
-# Sales Navigator Slicer Skill
+# Sales Navigator Slicer — Claude Code + Codex
 
-A standalone Codex skill that opens reviewed LinkedIn Sales Navigator company
-searches in Chrome, records their visible counts, recursively splits oversized
-searches and verifies that the final leaf counts reconcile with the parent.
+A standalone Agent Skill for Claude Code and Codex. It opens reviewed LinkedIn
+Sales Navigator company searches in Chrome, records their visible counts,
+recursively splits oversized searches and verifies that the final leaf counts
+reconcile with the parent.
 
 It requires no Cargo account, API token, connector, browser extension or npm
 dependency. It uses the user's existing Chrome session and Sales Navigator
 access. It never extracts companies, enriches contacts, writes to a CRM or
 sends outreach.
 
-## Install
+## Install for both agents
 
-Clone or copy this repository into the Codex skills directory under the folder
-name `salesnav-slicer`. No package installation is required.
+Keep one clone and expose it to both agents. No package installation is
+required.
 
 ```bash
 git clone https://github.com/zoxeavv/salesnav-slicer.git \
-  ~/.codex/skills/salesnav-slicer
+  ~/.agents/skills/salesnav-slicer
+mkdir -p ~/.claude/skills
+ln -s ~/.agents/skills/salesnav-slicer \
+  ~/.claude/skills/salesnav-slicer
 ```
+
+- Codex: invoke with `$salesnav-slicer`.
+- Claude Code: invoke with `/salesnav-slicer`.
+
+The repository also contains project-discovery links at
+`.agents/skills/salesnav-slicer` and `.claude/skills/salesnav-slicer`. Both
+resolve to this same canonical skill folder, so the instructions and scripts
+cannot drift between agents. Codex and Claude Code both support symlinked skill
+folders: see the [Codex skill locations](https://developers.openai.com/codex/skills)
+and [Claude Code skill locations](https://code.claude.com/docs/en/skills).
 
 ## What the skill does
 
